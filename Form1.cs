@@ -1,55 +1,36 @@
 using Emgu.CV;
 using Emgu.CV.CvEnum;
-using Emgu.CV.Structure;    
+using Emgu.CV.Structure;
 namespace OpenCvYuzTanima
 {
     public partial class Form1 : Form
     {
-        // ──────────────────────────────────────────
-        // Alanlar (Fields)
-        // ──────────────────────────────────────────
-
-        /// <summary>
-        /// Web kamerasına bağlantı nesnesi.
-        /// </summary>
+        // Kamera bağlantı nesnesi
         private VideoCapture? _capture;
 
-        /// <summary>
-        /// Haar Cascade yüz sınıflandırıcısı.
-        /// </summary>
+        // Yüz tespiti için Haar Cascade sınıflandırıcısı
         private CascadeClassifier? _faceCascade;
 
-        /// <summary>
-        /// Kameradan gelen ham kareyi tutmak için Mat nesnesi.
-        /// Her frame'de yeniden kullanılır → gereksiz GC baskısı önlenir.
-        /// </summary>
+        // Kameradan okunan görüntü karesini tutan matris
         private Mat _frame = new Mat();
 
-        /// <summary>
-        /// Kamera çalışıyor mu?
-        /// </summary>
+        // Kameranın çalışıp çalışmadığını tutan bayrak
         private bool _isRunning = false;
-
-        // ──────────────────────────────────────────
-        // Yapıcı & Form Yükleme
-        // ──────────────────────────────────────────
 
         public Form1()
         {
             InitializeComponent();
 
-            // Form kapanırken kaynakları serbest bırak
+            // Form kapanınca kaynakları temizle
             this.FormClosing += Form1_FormClosing;
         }
 
         private void Form1_Load(object sender, EventArgs e)
         {
-            // Haar Cascade XML dosyasını yükle.
-            // Emgu.CV.runtime.windows paketi bu dosyayı
-            // "haarcascades\" klasörüne kopyalar.
-
+            // XML dosyasının yolu
             string cascadePath = "haarcascade_frontalface_default.xml";
 
+            // Dosya yoksa hata ver ve butonu devre dışı bırak
             if (!System.IO.File.Exists(cascadePath))
             {
                 MessageBox.Show(
@@ -63,20 +44,18 @@ namespace OpenCvYuzTanima
                 return;
             }
 
+            // XML dosyasını yükleyerek sınıflandırıcıyı oluştur
             _faceCascade = new CascadeClassifier(cascadePath);
         }
-
-        // ──────────────────────────────────────────
-        // Buton Olayları
-        // ──────────────────────────────────────────
 
         private void btnStart_Click(object sender, EventArgs e)
         {
             if (_isRunning) return;
 
-            // 0 = varsayılan (ilk) kamera
+            // 0 numaralı kamerayı aç (ilk kamera)
             _capture = new VideoCapture(0, VideoCapture.API.DShow);
 
+            // Kamera açılamadıysa hata ver
             if (!_capture.IsOpened)
             {
                 MessageBox.Show("Kamera açılamadı!", "Hata",
@@ -91,9 +70,7 @@ namespace OpenCvYuzTanima
             btnStop.Enabled = true;
             lblStatus.Text = "Kamera çalışıyor...";
 
-            // Application.Idle: UI thread boşa düştüğünde çağrılır.
-            // Bu yöntem formu dondurmaz; ayrı bir Thread veya
-            // async döngüye gerek kalmaz.
+            // UI boşa düştüğünde ProcessFrame'i çağır
             Application.Idle += ProcessFrame;
         }
 
@@ -102,36 +79,36 @@ namespace OpenCvYuzTanima
             StopCamera();
         }
 
-        // ──────────────────────────────────────────
-        // Ana Frame İşleme Döngüsü
-        // ──────────────────────────────────────────
-
-        /// <summary>
-        /// Application.Idle event handler'ı.
-        /// UI thread her boşaldığında bir kare okur ve yüz tespiti yapar.
-        /// </summary>
         private void ProcessFrame(object? sender, EventArgs e)
         {
             if (_capture == null || !_isRunning) return;
 
+            // Kameradan bir kare oku
             _capture.Read(_frame);
             if (_frame.IsEmpty) return;
 
+            // Kareyi renkli görüntüye çevir
             using var image = _frame.ToImage<Bgr, byte>();
+
+            // Yüz tespiti için gri tona çevir
             using var grayImage = image.Convert<Gray, byte>();
+
+            // Kontrastı iyileştir (karanlık ortamlarda daha iyi tespit için)
             grayImage._EqualizeHist();
 
+            // Gri görüntüde yüzleri ara ve dikdörtgen listesi döndür
             Rectangle[] faces = _faceCascade!.DetectMultiScale(
                 grayImage,
-                scaleFactor: 1.1,
-                minNeighbors: 4,
-                minSize: new Size(60, 60)
+                scaleFactor: 1.1,   // Her adımda görüntüyü %10 küçült
+                minNeighbors: 4,    // Yanlış tespiti azaltmak için komşu sayısı
+                minSize: new Size(60, 60)  // En küçük algılanacak yüz boyutu
             );
 
+            // Bulunan her yüzün etrafına kırmızı dikdörtgen çiz
             foreach (Rectangle face in faces)
                 image.Draw(face, new Bgr(0, 0, 255), thickness: 2);
 
-            // ── ToBitmap() yerine manuel dönüşüm ──────────────────
+            // Görüntüyü PictureBox'ın anlayacağı Bitmap formatına çevir
             var bmp = new System.Drawing.Bitmap(
                 image.Width,
                 image.Height,
@@ -142,6 +119,7 @@ namespace OpenCvYuzTanima
                 System.Drawing.Imaging.ImageLockMode.WriteOnly,
                 bmp.PixelFormat);
 
+            // OpenCV görüntü verisini Bitmap belleğine kopyala
             image.Mat.CopyTo(new Mat(
                 image.Height, image.Width,
                 DepthType.Cv8U, 3,
@@ -149,37 +127,30 @@ namespace OpenCvYuzTanima
                 bmpData.Stride));
 
             bmp.UnlockBits(bmpData);
-            // ──────────────────────────────────────────────────────
 
+            // Eski görüntüyü sil, yeni kareyi ekrana yansıt
             var oldImage = pictureBoxCamera.Image;
             pictureBoxCamera.Image = bmp;
             oldImage?.Dispose();
 
+            // Algılanan yüz sayısını etikette göster
             lblFaceCount.Text = faces.Length > 0 ? $"🔴 {faces.Length} yüz algılandı" : "";
         }
 
-
-        // ──────────────────────────────────────────
-        // Temizlik (Dispose / Memory Leak Önleme)
-        // ──────────────────────────────────────────
-
-        /// <summary>
-        /// Kamerayı ve tüm kaynakları güvenli şekilde durdurur.
-        /// </summary>
         private void StopCamera()
         {
             if (!_isRunning) return;
 
-            // Idle event'ini kaldır — artık frame işlenmeyecek
+            // ProcessFrame'in tekrar çağrılmasını engelle
             Application.Idle -= ProcessFrame;
 
             _isRunning = false;
 
-            // VideoCapture'ı dispose et
+            // Kamera bağlantısını kapat
             _capture?.Dispose();
             _capture = null;
 
-            // PictureBox'taki son görüntüyü temizle
+            // Ekrandaki görüntüyü temizle
             var oldImage = pictureBoxCamera.Image;
             pictureBoxCamera.Image = null;
             oldImage?.Dispose();
@@ -191,9 +162,8 @@ namespace OpenCvYuzTanima
 
         private void Form1_FormClosing(object? sender, FormClosingEventArgs e)
         {
+            // Form kapanırken kamerayı ve tüm nesneleri temizle
             StopCamera();
-
-            // Mat ve CascadeClassifier nesnelerini dispose et
             _frame.Dispose();
             _faceCascade?.Dispose();
         }
